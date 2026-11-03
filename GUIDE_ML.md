@@ -192,7 +192,7 @@ createRoot(document.getElementById("root")).render(
 
 ### 5.6 `src/firebase.js`
 
-Firebase-മായി ബന്ധിപ്പിക്കുന്നു. `onValue` ഉപയോഗിക്കുന്നതിനാൽ ഡാറ്റാബേസിൽ ഏതൊരു മാറ്റവും വന്നാലും **റിഫ്രഷ് ചെയ്യാതെ തന്നെ** സ്ക്രീൻ മാറും. `subscribeResults` ഒരു unsubscribe ഫങ്ഷൻ തിരികെ നൽകുന്നു.
+Firebase-മായി ബന്ധിപ്പിക്കുന്നു. `kalo` നോഡിൽ ഇനങ്ങൾ ഇല്ലെങ്കിൽ ഡാറ്റാബേസ് root-ലും (ഒരു നില താഴെയും) സ്വയം തിരയും. `onValue` ഉപയോഗിക്കുന്നതിനാൽ ഡാറ്റാബേസിൽ ഏതൊരു മാറ്റവും വന്നാലും **റിഫ്രഷ് ചെയ്യാതെ തന്നെ** സ്ക്രീൻ മാറും. `subscribeResults` ഒരു unsubscribe ഫങ്ഷൻ തിരികെ നൽകുന്നു.
 
 ```js
 import { initializeApp } from "firebase/app";
@@ -212,11 +212,45 @@ const app = initializeApp({
 
 const db = getDatabase(app);
 
+const looksLikeItems = (d) =>
+  !!d && typeof d === "object" && Object.keys(d).some((k) => /^\d+\s/.test(k));
+
+// Finds the item list in the root snapshot, or one level inside it (e.g. under a differently named node)
+function findItems(d) {
+  if (looksLikeItems(d)) return d;
+  if (d && typeof d === "object") {
+    for (const v of Object.values(d)) if (looksLikeItems(v)) return v;
+  }
+  return {};
+}
+
 /** Subscribe to live results. Returns an unsubscribe function. */
 export function subscribeResults(onData, onError) {
   // Results live under the "kalo" node of the Realtime Database
   const path = import.meta.env.VITE_RESULTS_PATH || "kalo";
-  return onValue(ref(db, path), (snap) => onData(snap.val() || {}), onError);
+  let stopRoot = null;
+
+  const stop = onValue(
+    ref(db, path),
+    (snap) => {
+      const val = snap.val();
+      if (looksLikeItems(val)) {
+        if (stopRoot) { stopRoot(); stopRoot = null; }
+        onData(val);
+        return;
+      }
+      // Nothing item-like at the configured path: look in the database root instead
+      if (!stopRoot) {
+        stopRoot = onValue(ref(db, "/"), (s) => onData(findItems(s.val())), () => onData({}));
+      }
+    },
+    onError
+  );
+
+  return () => {
+    stop();
+    if (stopRoot) stopRoot();
+  };
 }
 ```
 
@@ -226,6 +260,8 @@ export function subscribeResults(onData, onError) {
 - **351 ഇനങ്ങളുടെ പട്ടിക** `masterItems.json` ൽ നിന്നാണ് വരുന്നത്. അതിനാൽ ഡാറ്റാബേസിൽ കുറച്ച് ഇനങ്ങളേ ഉള്ളൂ എങ്കിലും Total items എപ്പോഴും 351 (LP 32, UP 70, HS 120, HSS 129) ആയിരിക്കും.
 - ഡാറ്റാബേസിൽ നിന്നുള്ള `1`, `2`, `3` മൂല്യങ്ങൾ **ഇനത്തിന്റെ കോഡ്** വെച്ച് പൊരുത്തപ്പെടുത്തുന്നു.
 - `1`, `2`, `3` ൽ ഏതെങ്കിലും ഒന്നിൽ പേര് ഉണ്ടെങ്കിൽ ആ ഇനം `published = true` ആകും.
+- വിജയിയുടെ വരി (`16182 ARSHARAJ P 10 13070 - St.Thomas High School ...(134-Irikur) A`) `parseWinner` ഫങ്ഷൻ **ചെസ്റ്റ് നമ്പർ, പേര്, ക്ലാസ്, സ്കൂൾ, ഗ്രേഡ്** എന്നിങ്ങനെ വേർതിരിക്കുന്നു. പൊരുത്തപ്പെടാത്ത വരി അതേപടി കാണിക്കും.
+- `Name` ഫീൽഡിൽ Google Drive ലിങ്ക് ഉണ്ടെങ്കിൽ കാർഡിൽ **▶ View media** ബട്ടൺ വരും.
 
 ```js
 import MASTER from "./masterItems.json";
@@ -247,6 +283,20 @@ function parseKey(key) {
 }
 
 const codeOf = (key) => (key.match(/^(\d+)/) || [])[1] || key;
+
+/**
+ * Winner text looks like:
+ *   "16182 ARSHARAJ P 10 13070 - St.Thomas High School Manikkadave(134-Irikur) A"
+ *   chest no, name, class, school code - school (sub-district) grade
+ * Anything that does not match is shown as plain text.
+ */
+function parseWinner(raw) {
+  const text = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!text) return { raw: "", chest: "", name: "", cls: "", school: "", sub: "", grade: "" };
+  const m = text.match(/^(\d+)\s+(.+?)\s+(\d{1,2})\s+(\d{4,6})\s*-\s*(.+?)\s*\(([^)]*)\)\s*([A-Za-z+]*)$/);
+  if (!m) return { raw: text, chest: "", name: text, cls: "", school: "", sub: "", grade: "" };
+  return { raw: text, chest: m[1], name: m[2], cls: m[3], school: m[5], sub: m[6], grade: m[7] };
+}
 
 /**
  * The full list of items (351) comes from the bundled master list, so totals always match
@@ -280,6 +330,9 @@ export function parseItems(raw) {
         second,
         third,
         label: String(val.Name ?? "").trim(),
+        // "Name" holds a link (e.g. Google Drive) to the item's media/result file
+        link: /^https?:\/\//i.test(String(val.Name ?? "").trim()) ? String(val.Name).trim() : "",
+        winners: [first, second, third].map(parseWinner),
         published: Boolean(first || second || third),
       };
     })
@@ -311,7 +364,7 @@ const MEDALS = [
 ];
 
 function Podium({ item, big = false }) {
-  const winners = [item.first, item.second, item.third];
+  const winners = item.winners;
   // visual order: 2nd, 1st, 3rd
   const order = [1, 0, 2];
   const heights = big ? [150, 210, 120] : [64, 92, 52];
@@ -325,7 +378,8 @@ function Podium({ item, big = false }) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.5 + i * 0.15 }}
           >
-            {winners[idx] || "—"}
+            {winners[idx]?.name || "—"}
+            {big && winners[idx]?.school && <small className="podium-school">{winners[idx].school}</small>}
           </motion.div>
           <motion.div
             className={`podium-bar ${MEDALS[idx].cls}`}
@@ -338,6 +392,42 @@ function Podium({ item, big = false }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function WinnerList({ item, detailed = false }) {
+  return (
+    <>
+      <ol className="winners">
+        {MEDALS.map((m, i) => {
+          const w = item.winners[i];
+          const sub = [detailed && w.chest && `Chest No. ${w.chest}`, w.cls && `Class ${w.cls}`, w.school]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            <li key={m.pos} className={m.cls}>
+              <span className="medal">{m.icon}</span>
+              <span className="w-info">
+                <span className="w-name">{w.name || "—"}</span>
+                {sub && <span className="w-sub">{sub}</span>}
+              </span>
+              {w.grade && <span className="grade">{w.grade}</span>}
+            </li>
+          );
+        })}
+      </ol>
+      {item.link && (
+        <a
+          className="media-link"
+          href={item.link}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+        >
+          ▶ View media
+        </a>
+      )}
+    </>
   );
 }
 
@@ -360,17 +450,7 @@ function ResultCard({ item, fresh, onOpen }) {
       </header>
       <h3>{item.title}</h3>
       {item.published ? (
-        <ol className="winners">
-          {MEDALS.map((m, i) => {
-            const name = [item.first, item.second, item.third][i];
-            return (
-              <li key={m.pos} className={m.cls}>
-                <span className="medal">{m.icon}</span>
-                <span className="w-name">{name || "—"}</span>
-              </li>
-            );
-          })}
-        </ol>
+        <WinnerList item={item} />
       ) : (
         <div className="pending">
           <span className="pulse" /> Result awaited
@@ -400,6 +480,7 @@ function Modal({ item, onClose }) {
         <span className="code">#{item.code}</span>
         <h2>{item.title} {item.category && <small>{item.category}</small>}</h2>
         <Podium item={item} big />
+        <div className="modal-list"><WinnerList item={item} detailed /></div>
       </motion.div>
     </motion.div>
   );
@@ -500,7 +581,7 @@ export default function App() {
         <div className="ticker">
           <div className="ticker-track">
             {[...ticker, ...ticker].map((t, i) => (
-              <span key={i}>🏆 {t.title} {t.category} — 🥇 {t.first || "—"}</span>
+              <span key={i}>🏆 {t.title} {t.category} — 🥇 {t.winners[0].name || "—"}</span>
             ))}
           </div>
         </div>
@@ -679,6 +760,16 @@ body {
 
 .stats .of { font-size: 16px; color: var(--muted); font-weight: 600; display: inline; }
 .stats div { min-width: 110px; padding: 14px 20px; }
+
+.w-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.w-sub { color: var(--muted); font-size: 12px; line-height: 1.3; margin-top: 2px; word-break: break-word; }
+.grade { font-size: 12px; font-weight: 800; padding: 2px 8px; border-radius: 99px; background: rgba(52, 211, 153, .18); color: #6ee7b7; }
+.winners li { text-align: left; }
+.media-link { display: inline-block; margin-top: 12px; padding: 8px 14px; border-radius: 99px; font-size: 13px; font-weight: 700; color: #fff; text-decoration: none; background: linear-gradient(135deg, var(--accent), var(--accent2)); }
+.media-link:hover { filter: brightness(1.15); }
+.podium-school { display: block; font-size: 11px; font-weight: 500; color: var(--muted); margin-top: 2px; }
+.modal-list { margin-top: 22px; }
+.modal-list .media-link { margin-top: 14px; }
 ```
 
 ### 5.10 `.github/workflows/deploy.yml` (GitHub Pages-ൽ സ്വയം പ്രസിദ്ധീകരിക്കാൻ)

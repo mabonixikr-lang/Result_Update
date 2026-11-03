@@ -18,6 +18,28 @@ function parseKey(key) {
 
 const codeOf = (key) => (key.match(/^(\d+)/) || [])[1] || key;
 
+function toTime(v) {
+  if (v === undefined || v === null || v === "") return 0;
+  const n = Number(v);
+  if (Number.isFinite(n) && n > 0) return n;
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? t : 0;
+}
+
+/**
+ * Winner text looks like:
+ *   "16182 ARSHARAJ P 10 13070 - St.Thomas High School Manikkadave(134-Irikur) A"
+ *   chest no, name, class, school code - school (sub-district) grade
+ * Anything that does not match is shown as plain text.
+ */
+function parseWinner(raw) {
+  const text = String(raw || "").replace(/\s+/g, " ").trim();
+  if (!text) return { raw: "", chest: "", name: "", cls: "", school: "", sub: "", grade: "" };
+  const m = text.match(/^(\d+)\s+(.+?)\s+(\d{1,2})\s+(\d{4,6})\s*-\s*(.+?)\s*\(([^)]*)\)\s*([A-Za-z+]*)$/);
+  if (!m) return { raw: text, chest: "", name: text, cls: "", school: "", sub: "", grade: "" };
+  return { raw: text, chest: m[1], name: m[2], cls: m[3], school: m[5], sub: m[6], grade: m[7] };
+}
+
 /**
  * The full list of items (351) comes from the bundled master list, so totals always match
  * the database export. Live results from Firebase are merged in by item code.
@@ -50,6 +72,11 @@ export function parseItems(raw) {
         second,
         third,
         label: String(val.Name ?? "").trim(),
+        // "Name" holds a link (e.g. Google Drive) to the item's media/result file
+        link: /^https?:\/\//i.test(String(val.Name ?? "").trim()) ? String(val.Name).trim() : "",
+        winners: [first, second, third].map(parseWinner),
+        // optional publish time (ms since epoch, or ISO date) written by the data-entry app
+        publishedAt: toTime(val.publishedAt ?? val.timestamp),
         published: Boolean(first || second || third),
       };
     })
