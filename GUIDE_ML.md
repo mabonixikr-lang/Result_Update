@@ -39,6 +39,8 @@ kalolsavam-results/
 ├─ vite.config.js        ← Vite സെറ്റിംഗ്സ്
 ├─ .env                  ← Firebase URL, നോഡ് പേര് (ഇത് നിങ്ങൾ ഉണ്ടാക്കണം)
 ├─ .env.example          ← .env ന്റെ മാതൃക
+├─ .gitignore
+├─ .github/workflows/deploy.yml   ← GitHub Pages സ്വയം പ്രസിദ്ധീകരണം
 └─ src/
    ├─ main.jsx           ← ആപ്പ് തുടങ്ങുന്ന ഫയൽ
    ├─ App.jsx            ← മുഴുവൻ സ്ക്രീനും ആനിമേഷനും
@@ -164,7 +166,28 @@ import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import "./styles.css";
 
-createRoot(document.getElementById("root")).render(<App />);
+// Shows the real error on screen instead of a blank white page
+class ErrorBoundary extends React.Component {
+  state = { error: null };
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div style={{ padding: 24, color: "#fca5a5", fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
+        Something went wrong:{"\n"}
+        {String(this.state.error?.message || this.state.error)}
+      </div>
+    );
+  }
+}
+
+createRoot(document.getElementById("root")).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);
 ```
 
 ### 5.6 `src/firebase.js`
@@ -175,10 +198,16 @@ Firebase-മായി ബന്ധിപ്പിക്കുന്നു. `onVa
 import { initializeApp } from "firebase/app";
 import { getDatabase, ref, onValue } from "firebase/database";
 
+// Fallbacks are used when no .env exists (e.g. when GitHub builds the site).
+// These values are public configuration, not secrets.
+const DATABASE_URL =
+  import.meta.env.VITE_FIREBASE_DATABASE_URL || "https://fir-app3-2144a-default-rtdb.firebaseio.com";
+const PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID || "fir-app3-2144a";
+
 const app = initializeApp({
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || undefined,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  databaseURL: import.meta.env.VITE_FIREBASE_DATABASE_URL,
+  projectId: PROJECT_ID,
+  databaseURL: DATABASE_URL,
 });
 
 const db = getDatabase(app);
@@ -652,7 +681,64 @@ body {
 .stats div { min-width: 110px; padding: 14px 20px; }
 ```
 
-### 5.10 `src/masterItems.json`
+### 5.10 `.github/workflows/deploy.yml` (GitHub Pages-ൽ സ്വയം പ്രസിദ്ധീകരിക്കാൻ)
+
+`main` ബ്രാഞ്ചിലേക്ക് push ചെയ്യുമ്പോഴെല്ലാം GitHub സ്വയം `npm ci` + `npm run build` റൺ ചെയ്ത് **`dist` ഫോൾഡർ** സൈറ്റായി പ്രസിദ്ധീകരിക്കും. (`npm ci` ന് `package-lock.json` വേണം, അത് GitHub-ലേക്ക് അപ്‌ലോഡ് ചെയ്യണം.)
+
+```yaml
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+```
+
+### 5.11 `.gitignore`
+
+`node_modules`, `dist`, `.env` എന്നിവ GitHub-ലേക്ക് പോകാതിരിക്കാൻ. `.env` അപ്‌ലോഡ് ചെയ്യാത്തതിനാൽ ആണ് `firebase.js` ൽ URL-ന് ഡിഫോൾട്ട് മൂല്യം നൽകിയിരിക്കുന്നത്.
+
+```bash
+node_modules
+dist
+.env
+```
+
+### 5.12 `src/masterItems.json`
 
 351 ഇനങ്ങളുടെ key-കളുടെ പട്ടിക (ഉദാ: `"1000 NangiarKoothu HSS"`). വലിപ്പം കാരണം ഇവിടെ പകർത്തിയിട്ടില്ല, zip-ലെ `src/masterItems.json` ഫയൽ ഉപയോഗിക്കുക. പുതിയ ഇനം ചേർക്കണമെങ്കിൽ ഇതേ രീതിയിൽ ഒരു വരി ചേർത്താൽ മതി.
 
@@ -679,15 +765,33 @@ Realtime Database → **Rules** ടാബിൽ:
 
 **Publish** അമർത്തുക. ഇല്ലെങ്കിൽ സൈറ്റിൽ "Could not read database" എന്ന എറർ വരും.
 
-## 8. ഓൺലൈനിൽ പ്രസിദ്ധീകരിക്കാൻ
+## 8. GitHub Pages-ൽ പ്രസിദ്ധീകരിക്കാൻ (വെള്ള സ്ക്രീൻ വരാതിരിക്കാൻ)
 
+### വെള്ള സ്ക്രീൻ വരുന്നതിന്റെ കാരണങ്ങൾ
+1. **സോഴ്സ് ഫയലുകൾ നേരിട്ട് പ്രസിദ്ധീകരിച്ചു.** `index.html` ൽ `/src/main.jsx` എന്നാണ് ഉള്ളത്. ബ്രൗസറിന് JSX മനസ്സിലാകില്ല. GitHub Pages-ൽ കാണിക്കേണ്ടത് `npm run build` ഉണ്ടാക്കുന്ന **`dist`** ഫോൾഡറാണ്.
+2. **`.env` GitHub-ൽ ഇല്ല.** അതിനാൽ ബിൽഡിൽ Firebase URL ഇല്ലാതെ വരികയും ആപ്പ് തുടങ്ങുമ്പോൾത്തന്നെ crash ആകുകയും ചെയ്യും. ഈ പതിപ്പിൽ `firebase.js` ൽ URL ഡിഫോൾട്ട് ആയി ചേർത്തിട്ടുണ്ട്, അതിനാൽ ഇനി ഈ പ്രശ്നം വരില്ല.
+3. ഇനി എന്തെങ്കിലും എറർ വന്നാൽ വെള്ള സ്ക്രീനിന് പകരം **എററിന്റെ സന്ദേശം സ്ക്രീനിൽ കാണിക്കും** (ErrorBoundary).
+
+### രീതി A – സ്വയം പ്രസിദ്ധീകരണം (GitHub Actions) – ശുപാർശ ചെയ്യുന്നത്
+1. പ്രോജക്റ്റ് മുഴുവൻ GitHub റെപ്പോയിലേക്ക് അപ്‌ലോഡ് ചെയ്യുക. `.github/workflows/deploy.yml`, `package-lock.json`, `src/masterItems.json` എന്നിവ ഉൾപ്പെടണം. `node_modules` വേണ്ട.
+2. ബ്രാഞ്ചിന്റെ പേര് **`main`** ആയിരിക്കണം.
+3. GitHub റെപ്പോ → **Settings → Pages → Build and deployment → Source: GitHub Actions** തിരഞ്ഞെടുക്കുക.
+4. **Actions** ടാബിൽ "Deploy to GitHub Pages" പച്ച ടിക്ക് വരുന്നതുവരെ കാത്തിരിക്കുക.
+5. സൈറ്റ്: `https://<യൂസർനെയിം>.github.io/<റെപ്പോ-പേര്>/`
+
+### രീതി B – കൈകൊണ്ട്
 ```bash
 npm run build
 ```
+`dist` ഫോൾഡറിനുള്ളിലെ ഫയലുകൾ (ഫോൾഡർ അല്ല) ആണ് `gh-pages` ബ്രാഞ്ചിൽ വരേണ്ടത്. Pages Source: **Deploy from a branch → gh-pages / (root)**.
 
-`dist` ഫോൾഡർ ഉണ്ടാകും. ഇത് **Firebase Hosting**, **Netlify** (drag & drop), **GitHub Pages** എന്നിവയിലൊന്നിൽ അപ്‌ലോഡ് ചെയ്യാം.
+### പരിശോധന
+- സൈറ്റ് തുറന്ന് `Ctrl + U` (View source) അമർത്തുക. `src="./assets/index-....js"` എന്നാണ് കാണുന്നതെങ്കിൽ ശരിയാണ്. `src="/src/main.jsx"` ആണെങ്കിൽ സോഴ്സ് ഫയലാണ് പ്രസിദ്ധീകരിച്ചിരിക്കുന്നത് (കാരണം 1).
+- `F12 → Console` ൽ **`src/...` അല്ലെങ്കിൽ `assets/...` എന്ന് തുടങ്ങുന്ന** ചുവന്ന എററുകൾ മാത്രം നോക്കുക (Chrome Extension എററുകൾ അവഗണിക്കാം).
+- Firebase Rules-ൽ `.read: true` ഉണ്ടോ എന്ന് ഉറപ്പാക്കുക (ഭാഗം 7).
 
-Firebase Hosting: `npm i -g firebase-tools` → `firebase login` → `firebase init hosting` (public: `dist`, SPA: Yes) → `firebase deploy`
+### Firebase Hosting / Netlify
+Firebase Hosting: `npm i -g firebase-tools` → `firebase login` → `firebase init hosting` (public: `dist`, SPA: Yes) → `firebase deploy`. Netlify: `dist` ഫോൾഡർ drag & drop ചെയ്യുക.
 
 ## 9. പ്രശ്നങ്ങളും പരിഹാരവും
 
@@ -698,4 +802,5 @@ Firebase Hosting: `npm i -g firebase-tools` → `firebase login` → `firebase i
 | ഒരു റിസൾട്ടും കാണുന്നില്ല | `1`,`2`,`3` ൽ പേര് ഉണ്ടോ എന്നും `VITE_RESULTS_PATH` ശരിയാണോ എന്നും നോക്കുക |
 | `npm` കമാൻഡ് കണ്ടെത്തുന്നില്ല | Node.js ഇൻസ്റ്റാൾ ചെയ്ത് VS Code പുനരാരംഭിക്കുക |
 | `.env` മാറ്റിയിട്ടും മാറ്റമില്ല | സെർവർ നിർത്തി `npm run dev` വീണ്ടും റൺ ചെയ്യുക |
+| GitHub Pages-ൽ വെള്ള സ്ക്രീൻ | ഭാഗം 8 കാണുക: `dist` ആണോ പ്രസിദ്ധീകരിച്ചത്, Pages Source = GitHub Actions ആണോ എന്ന് നോക്കുക |
 | Total 351 അല്ല | പഴയ പതിപ്പ് ആകാം; പുതിയ zip Extract ചെയ്ത് `npm run dev` റൺ ചെയ്യുക |
