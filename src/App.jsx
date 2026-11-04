@@ -4,6 +4,7 @@ import { subscribeResults } from "./firebase.js";
 import { parseItems, CATEGORIES } from "./parse.js";
 import logoImage from "./assets/logo.png";
 
+
 const MEDALS = [
   { pos: 1, label: "1st", icon: "1", cls: "gold" },
   { pos: 2, label: "2nd", icon: "2", cls: "silver" },
