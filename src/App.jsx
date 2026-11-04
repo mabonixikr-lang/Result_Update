@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { subscribeResults } from "./firebase.js";
 import { parseItems, CATEGORIES } from "./parse.js";
-import logoImage from "./assets/logo.png";
+// Logo is loaded from public/logo.png. BASE_URL keeps the path correct on GitHub Pages.
+const logoSrc = `${import.meta.env.BASE_URL}logo.png`;
 
 
 const MEDALS = [
@@ -235,7 +236,12 @@ export default function App() {
           <span className="live"><b /> LIVE</span> Kalolsavam Results
         </div>
         <div className="top-logo-container">
-          <img src="./logo.png" alt="Logo" className="top-logo" />
+          <img
+              src={logoSrc}
+              alt="Amabonix Digi Hub logo"
+              className="top-logo"
+              onError={(e) => { e.currentTarget.style.display = "none"; }}
+            />  
         </div>
       </div>
 
