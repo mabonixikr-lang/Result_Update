@@ -1,47 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { subscribeResults, subscribeConnection } from "./firebase.js";
+import { subscribeResults } from "./firebase.js";
 import { parseItems, CATEGORIES } from "./parse.js";
+import logoImage from "./assets/logo.png";
 
 const MEDALS = [
-  { pos: 1, label: "1st", icon: "🥇", cls: "gold" },
-  { pos: 2, label: "2nd", icon: "🥈", cls: "silver" },
-  { pos: 3, label: "3rd", icon: "🥉", cls: "bronze" },
+  { pos: 1, label: "1st", icon: "1", cls: "gold" },
+  { pos: 2, label: "2nd", icon: "2", cls: "silver" },
+  { pos: 3, label: "3rd", icon: "3", cls: "bronze" },
 ];
 
-/* ---------- Scoreboard-style rolling digits ---------- */
-function Digit({ d }) {
-  return (
-    <span className="odo-digit">
-      <motion.span
-        className="odo-strip"
-        initial={{ y: "0%" }}
-        animate={{ y: `${-d * 10}%` }}
-        transition={{ type: "spring", stiffness: 70, damping: 14 }}
-      >
-        {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
-          <span key={n}>{n}</span>
-        ))}
-      </motion.span>
-    </span>
-  );
-}
-
-function Odometer({ value }) {
-  const s = String(value);
-  return (
-    <span className="odo" aria-label={s}>
-      {s.split("").map((ch, i) => (
-        <Digit key={s.length - i} d={Number(ch)} />
-      ))}
-    </span>
-  );
-}
-
-/* ---------- Podium (used in the popup) ---------- */
 function Podium({ item, big = false }) {
   const winners = item.winners;
-  // visual order: 2nd, 1st, 3rd
   const order = [1, 0, 2];
   const heights = big ? [150, 210, 120] : [64, 92, 52];
   return (
@@ -71,32 +41,26 @@ function Podium({ item, big = false }) {
   );
 }
 
-/* ---------- 1st / 2nd / 3rd rows revealed like a scorecard ---------- */
-function WinnerList({ item, detailed = false, baseDelay = 0.3 }) {
+function WinnerList({ item, detailed = false }) {
+  const displayMedals = detailed ? MEDALS : [MEDALS[0]];
+
   return (
     <>
       <ol className="winners">
-        {MEDALS.map((m, i) => {
+        {displayMedals.map((m, i) => {
           const w = item.winners[i];
-          const sub = [detailed && w.chest && `Chest No. ${w.chest}`, w.cls && `Class ${w.cls}`, w.school]
+          const sub = [w.cls && `Class ${w.cls}`, w.school]
             .filter(Boolean)
             .join(" · ");
           return (
-            <motion.li
-              key={m.pos}
-              className={`row ${m.cls} ${w.name ? "" : "row-empty"}`}
-              // 3rd is revealed first, 1st last - builds suspense like a wicket falling
-              initial={{ x: -90, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              transition={{ delay: baseDelay + (2 - i) * 0.4, type: "spring", stiffness: 140, damping: 16 }}
-            >
-              <span className="rank">{m.pos}</span>
+            <li key={m.pos} className={m.cls}>
+              <span className="medal">{m.icon}</span>
               <span className="w-info">
                 <span className="w-name">{w.name || "—"}</span>
                 {sub && <span className="w-sub">{sub}</span>}
               </span>
-              {w.grade && <span className="grade-box">{w.grade}</span>}
-            </motion.li>
+              {w.grade && <span className="grade">{w.grade}</span>}
+            </li>
           );
         })}
       </ol>
@@ -115,29 +79,32 @@ function WinnerList({ item, detailed = false, baseDelay = 0.3 }) {
   );
 }
 
-/* ---------- Big scoreboard card ---------- */
-function ResultCard({ item, fresh, onOpen, index }) {
+function ResultCard({ item, fresh, onOpen }) {
   return (
     <motion.article
       layout
-      initial={{ opacity: 0, y: 80, rotateX: -18, scale: 0.94 }}
-      animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }}
-      exit={{ opacity: 0, x: 120 }}
-      whileHover={{ y: -6, scale: 1.015 }}
-      transition={{ type: "spring", stiffness: 160, damping: 20, delay: index * 0.15 }}
-      className={`board ${fresh ? "board-fresh" : ""}`}
-      onClick={() => onOpen(item)}
+      initial={{ opacity: 0, y: 24, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.9 }}
+      whileHover={{ y: -4 }}
+      transition={{ type: "spring", stiffness: 260, damping: 24 }}
+      className={`card ${item.published ? "" : "card-pending"} ${fresh ? "card-fresh" : ""}`}
+      onClick={() => item.published && onOpen(item)}
     >
-      <div className="board-head">
-        <span className="live-dot" />
-        <span className="board-tag">RESULT</span>
+      <header>
+        <span className="card-badge-left">• RESULT</span>
         <span className="code">#{item.code}</span>
         {item.category && <span className={`tag tag-${item.category}`}>{item.category}</span>}
         {fresh && <span className="new-badge">NEW</span>}
-      </div>
-      <h3 className="board-title">{item.title}</h3>
-      <WinnerList item={item} baseDelay={0.4 + index * 0.15} />
-      <span className="shine" />
+      </header>
+      <h3>{item.title}</h3>
+      {item.published ? (
+        <WinnerList item={item} detailed={false} />
+      ) : (
+        <div className="pending">
+          <span className="pulse" /> Result awaited
+        </div>
+      )}
     </motion.article>
   );
 }
@@ -162,232 +129,194 @@ function Modal({ item, onClose }) {
         <span className="code">#{item.code}</span>
         <h2>{item.title} {item.category && <small>{item.category}</small>}</h2>
         <Podium item={item} big />
-        <div className="modal-list"><WinnerList item={item} detailed /></div>
+        <div className="modal-list"><WinnerList item={item} detailed={true} /></div>
       </motion.div>
     </motion.div>
   );
 }
 
-/* ---------- Bottom score bug: cycles through the latest results ---------- */
-function ScoreBug({ items }) {
-  const [i, setI] = useState(0);
+function Counter({ value }) {
+  const [n, setN] = useState(0);
   useEffect(() => {
-    if (items.length < 2) return;
-    const t = setInterval(() => setI((n) => (n + 1) % items.length), 4500);
-    return () => clearInterval(t);
-  }, [items.length]);
-  const it = items[i % Math.max(items.length, 1)];
-  if (!it) return null;
-  return (
-    <div className="bug">
-      <span className="bug-label">LATEST</span>
-      <div className="bug-body">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={it.key}
-            className="bug-line"
-            initial={{ y: 30, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: -30, opacity: 0 }}
-            transition={{ duration: 0.4 }}
-          >
-            <b>{it.title}</b> <i>{it.category}</i>
-            <span>🥇 {it.winners[0].name || "—"}</span>
-            {it.winners[1].name && <span>🥈 {it.winners[1].name}</span>}
-            {it.winners[2].name && <span>🥉 {it.winners[2].name}</span>}
-          </motion.div>
-        </AnimatePresence>
-      </div>
-    </div>
-  );
-}
-
-/* ---------- Large stat tile with rolling number and progress bar ---------- */
-function StatCard({ icon, label, value, total, tone, big = false, index = 0 }) {
-  const pct = total ? Math.min(100, (value / total) * 100) : 0;
-  return (
-    <motion.article
-      className={`stat ${big ? "stat-big" : ""}`}
-      style={{ "--tone": tone }}
-      initial={{ opacity: 0, y: 30, scale: 0.9 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      whileHover={{ y: -5, scale: 1.03 }}
-      transition={{ type: "spring", stiffness: 170, damping: 18, delay: 0.1 + index * 0.08 }}
-    >
-      <span className="stat-icon">{icon}</span>
-      <span className="stat-num">
-        <Odometer value={value} />
-        {total !== undefined && !big && <span className="stat-of">/{total}</span>}
-      </span>
-      <span className="stat-label">{label}</span>
-      {total !== undefined && (
-        <span className="stat-bar">
-          <motion.span
-            className="stat-fill"
-            initial={{ width: 0 }}
-            animate={{ width: `${value > 0 ? Math.max(pct, 3) : 0}%` }}
-            transition={{ duration: 1.2, ease: "easeOut" }}
-          />
-        </span>
-      )}
-      {total !== undefined && big && <span className="stat-note">{value} of {total} items</span>}
-    </motion.article>
-  );
+    let raf;
+    const start = performance.now();
+    const from = n;
+    const tick = (t) => {
+      const p = Math.min(1, (t - start) / 700);
+      setN(Math.round(from + (value - from) * (1 - Math.pow(1 - p, 3))));
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+  return <>{n}</>;
 }
 
 export default function App() {
   const [raw, setRaw] = useState(null);
   const [error, setError] = useState(null);
+  const [category, setCategory] = useState("ALL");
+  const [query, setQuery] = useState("");
   const [open, setOpen] = useState(null);
   const [fresh, setFresh] = useState({});
-  const [banner, setBanner] = useState(null);
+  const [toast, setToast] = useState(null);
+  
   const prev = useRef(null);
-  // when each result appeared or changed on this device (kept in localStorage so a refresh doesn't lose the order)
-  const seenAt = useRef(
-    (() => {
-      try { return JSON.parse(localStorage.getItem("kalo-changed-at") || "{}"); } catch { return {}; }
-    })()
-  );
-
-  const [online, setOnline] = useState(false);
-  const [syncedAt, setSyncedAt] = useState(null);
+  const updateTimes = useRef({});
 
   useEffect(() => {
-    const stopData = subscribeResults(
-      (data) => {
-        setError(null);
-        setRaw(data);
-        setSyncedAt(new Date()); // every change in the "kalo" node lands here
-      },
+    return subscribeResults(
+      (data) => setRaw(data),
       (err) => setError(err.message)
     );
-    const stopConn = subscribeConnection(setOnline);
-    return () => {
-      stopData();
-      stopConn();
-    };
   }, []);
 
   const items = useMemo(() => (raw ? parseItems(raw) : []), [raw]);
 
-  // detect newly published / changed results after first load
   useEffect(() => {
     if (!raw) return;
     const sig = Object.fromEntries(items.map((i) => [i.key, `${i.first}|${i.second}|${i.third}`]));
+    const now = Date.now();
+
     if (prev.current) {
       const changed = items.filter((i) => i.published && sig[i.key] !== prev.current[i.key]);
       if (changed.length) {
-        changed.forEach((c) => { seenAt.current[c.key] = Date.now(); });
-        try { localStorage.setItem("kalo-changed-at", JSON.stringify(seenAt.current)); } catch { /* storage unavailable */ }
+        changed.forEach((c) => {
+          updateTimes.current[c.key] = now;
+        });
         setFresh((f) => ({ ...f, ...Object.fromEntries(changed.map((c) => [c.key, true])) }));
-        setBanner(changed[0]);
-        setTimeout(() => setBanner(null), 6000);
+        setToast(changed[0]);
+        setTimeout(() => setToast(null), 6000);
         setTimeout(
           () => setFresh((f) => { const n = { ...f }; changed.forEach((c) => delete n[c.key]); return n; }),
           30000
         );
       }
+    } else {
+      items.forEach((i) => {
+        if (i.published && !updateTimes.current[i.key]) {
+          updateTimes.current[i.key] = i.publishedAt || now;
+        }
+      });
     }
     prev.current = sig;
   }, [items, raw]);
 
   const published = items.filter((i) => i.published);
+  
+  const filtered = published.filter((i) => {
+    if (category !== "ALL" && i.category !== category) return false;
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return [i.code, i.title, i.first, i.second, i.third].join(" ").toLowerCase().includes(q);
+  });
 
-  // Only the 3 most recently published results.
-  // Recency = item's "publishedAt" time if present, else when it appeared on this page, else highest code.
-  const stamp = (i) => i.publishedAt || seenAt.current[i.key] || 0;
-  const latest = [...published]
-    .sort((a, b) => stamp(b) - stamp(a) || Number(b.code) - Number(a.code))
-    .slice(0, 3);
+  const latestThree = useMemo(() => {
+    return [...filtered]
+      .sort((a, b) => {
+        const timeA = updateTimes.current[a.key] || a.publishedAt || 0;
+        const timeB = updateTimes.current[b.key] || b.publishedAt || 0;
+        return timeB - timeA;
+      })
+      .slice(0, 3);
+  }, [filtered, raw]);
+
+  const ticker = published.slice(-8).reverse();
 
   return (
     <div className="app">
       <div className="bg-orbs"><i /><i /><i /></div>
 
-      <div className="strip">
-        <div className="strip-track">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <span key={i}>● LIVE RESULTS &nbsp; KALOLSAVAM &nbsp;</span>
-          ))}
+      {/* Top Header Navigation Bar */}
+      <div className="top-nav-bar">
+        <div className="top-brand">
+          <span className="live"><b /> LIVE</span> Kalolsavam Results
+        </div>
+        <div className="top-logo-container">
+          <img src="./logo.png" alt="Logo" className="top-logo" />
         </div>
       </div>
 
       <header className="hero">
-        <motion.h1 initial={{ opacity: 0, y: -30, letterSpacing: "12px" }} animate={{ opacity: 1, y: 0, letterSpacing: "-0.5px" }} transition={{ duration: 0.9 }}>
-          <span className="live"><b /> LIVE</span> Kalolsavam Results
+        <motion.h1 initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}>
+          Kalolsavam Results Dashboard
         </motion.h1>
-        <p className="sync-line">
-          <span className={`sync-dot ${online ? "on" : ""}`} />
-          {online ? "Connected" : "Connecting…"}
-          {syncedAt && (
-            <>
-              {" · "}Last update{" "}
-              <motion.b
-                key={syncedAt.getTime()}
-                initial={{ color: "#fbbf24", scale: 1.3 }}
-                animate={{ color: "#e9d5ff", scale: 1 }}
-                transition={{ duration: 1.4 }}
-              >
-                {syncedAt.toLocaleTimeString()}
-              </motion.b>
-            </>
-          )}
-        </p>
+        <p>Results appear here the moment they are published.</p>
         <div className="stats">
-          <StatCard big index={0} icon="📋" tone="#60a5fa" label="Total items" value={items.length} />
-          <StatCard big index={1} icon="🏆" tone="#34d399" label="Results published" value={published.length} total={items.length} />
-          {CATEGORIES.map((c, i) => (
-            <StatCard
-              key={c}
-              index={i + 2}
-              icon={{ LP: "🌱", UP: "📘", HS: "🎓", HSS: "🏅" }[c]}
-              tone={{ LP: "#34d399", UP: "#60a5fa", HS: "#f472b6", HSS: "#a78bfa" }[c]}
-              label={`${c} published`}
-              value={published.filter((i2) => i2.category === c).length}
-              total={items.filter((i2) => i2.category === c).length}
-            />
+          <div><strong><Counter value={items.length} /></strong><span>Total items</span></div>
+          <div><strong className="ok"><Counter value={published.length} /></strong><span>Results published</span></div>
+          {CATEGORIES.map((c) => (
+            <div key={c}>
+              <strong>
+                <Counter value={published.filter((i) => i.category === c).length} />
+                <small className="of">/{items.filter((i) => i.category === c).length}</small>
+              </strong>
+              <span>{c} published</span>
+            </div>
           ))}
         </div>
       </header>
 
-      <h2 className="section-title">Latest results</h2>
+      {ticker.length > 0 && (
+        <div className="ticker">
+          <div className="ticker-track">
+            {[...ticker, ...ticker].map((t, i) => (
+              <span key={i}>🏆 {t.title} {t.category} — 🥇 {t.winners[0].name || "—"}</span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <section className="controls">
+        <input
+          className="search"
+          placeholder="Search item, code or winner…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className="chips">
+          {["ALL", ...CATEGORIES].map((c) => (
+            <button key={c} className={`chip ${category === c ? "on" : ""}`} onClick={() => setCategory(c)}>
+              {c}
+            </button>
+          ))}
+        </div>
+      </section>
 
       {error && <div className="msg error">Could not read database: {error}</div>}
       {!raw && !error && <div className="msg"><span className="spinner" /> Loading results…</div>}
 
       {raw && (
-        <main className="grid">
+        <motion.main layout className="grid">
           <AnimatePresence mode="popLayout">
-            {latest.map((it, idx) => (
-              <ResultCard key={it.key} item={it} index={idx} fresh={!!fresh[it.key]} onOpen={setOpen} />
+            {latestThree.map((it) => (
+              <ResultCard key={it.key} item={it} fresh={!!fresh[it.key]} onOpen={setOpen} />
             ))}
           </AnimatePresence>
-          {latest.length === 0 && <div className="msg">No results have been published yet.</div>}
-        </main>
+          {latestThree.length === 0 && (
+            <div className="msg">
+              {published.length === 0 ? "No results have been published yet." : "No published results match."}
+            </div>
+          )}
+        </motion.main>
       )}
 
       <AnimatePresence>{open && <Modal item={open} onClose={() => setOpen(null)} />}</AnimatePresence>
 
-      {/* Broadcast-style banner when a new result arrives */}
       <AnimatePresence>
-        {banner && (
+        {toast && (
           <motion.div
-            className="flash"
-            initial={{ x: "-110%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "110%" }}
-            transition={{ type: "spring", stiffness: 110, damping: 18 }}
-            onClick={() => { setOpen(banner); setBanner(null); }}
+            className="toast"
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 80, opacity: 0 }}
+            onClick={() => { setOpen(toast); setToast(null); }}
           >
-            <span className="flash-burst" />
-            <span className="flash-tag">🏏 NEW RESULT</span>
-            <b>{banner.title} {banner.category}</b>
-            <span>🥇 {banner.winners[0].name || "—"}</span>
+            🎉 New result: <b>{toast.title} {toast.category}</b> — tap to view
           </motion.div>
         )}
       </AnimatePresence>
-
-      <ScoreBug items={latest} />
     </div>
   );
 }
